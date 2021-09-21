@@ -8,4 +8,8 @@ fi
 
 echo "Hello, $NAME!"
 
-cat | base64
+if [[ -e README.md ]]; then 
+  head -6 README.md | tail -5
+fi
+
+cat

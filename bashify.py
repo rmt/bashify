@@ -1,6 +1,6 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 #
-# Copyright 2014, Robert Thomson
+# Copyright 2021, Robert Thomson
 # Released under the MIT license.
 #
 
@@ -32,7 +32,7 @@ class Bashify(object):
         self.files = {}
         self.commands = []
 
-    def add_file(self, filename, dest_filename=None):
+    def add_file(self, filename, dest_filename=None, data=None):
         """
         Include the given file, and create it in the temporary directory
         with dest_filename.  If dest_filename is blank, use the basename
@@ -43,9 +43,11 @@ class Bashify(object):
         """
         if not dest_filename:
             dest_filename = os.path.basename(filename)
-        with open(filename, 'rb') as fd:
-            data = fd.read()
-            self.files[dest_filename] = data
+        if not data:
+            with open(filename, 'rb') as fd:
+                data = fd.read()
+        assert isinstance(data, bytes)
+        self.files[dest_filename] = data
 
     def add_command(self, command, stdin=None):
         """
@@ -95,13 +97,13 @@ class Bashify(object):
 
     def _dump_file(self, fd, filename, contents):
         fd.write('base64 -d > {0} <<"EOF_b64"\n'.format(filename,))
-        fd.write(b64encode(contents))
+        fd.write(b64encode(contents).decode("ascii"))
         fd.write('\nEOF_b64\n')
 
     def _dump_command(self, fd, command, stdin):
         if stdin:
             fd.write('base64 -d <<"EOF_b64" | {0}\n'.format(command))
-            fd.write(b64encode(stdin))
+            fd.write(b64encode(stdin).decode("ascii"))
             fd.write('\nEOF_b64\n')
         else:
             fd.write("{0}\n".format(command))
@@ -118,18 +120,39 @@ class Bashify(object):
             self._dump_command(fd, command, stdin)
 
 
-if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        argv = sys.argv[1:]
-        if argv[0] == "--stdin":
-            stdin = sys.stdin.read()
-            argv.pop(0)
-        else:
-            stdin = None
-        script = argv[0]
-        args = argv[1:]
-        b = Bashify()
-        b.add_script(script, args=args, stdin=stdin)
-        b.dump(sys.stdout)
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--files", "-f", metavar="FILE", nargs="*",
+                        help="add files to script: filename[=destfilename]")
+    parser.add_argument("--stdin", "-i", action="store_true",
+                        help="embed our stdin as script's stdin")
+    parser.add_argument("--output", "-o",
+                        help="where to write script [stdout]")
+    parser.add_argument("script")
+    parser.add_argument("args", nargs="*")
+    args = parser.parse_args()
+
+    if args.stdin:
+        stdin = sys.stdin.buffer.read()  # read as bytes
     else:
-        print "Syntax: {0} [--stdin] <script file> [args]"
+        stdin = None
+
+    b = Bashify()
+    for filename in (args.files or []):
+        if "=" in filename:
+            filename, dstfilename = filename.split("=", 1)
+        else:
+            dstfilename = None
+        b.add_file(filename, dstfilename)
+    b.add_script(args.script, args=args.args, stdin=stdin)
+    if args.output:
+        with open(args.output, "w") as outfd:
+            os.chmod(args.output, 0o755)
+            b.dump(outfd)
+    else:
+        b.dump(sys.stdout)
+
+
+if __name__ == '__main__':
+    main()
